@@ -131,6 +131,7 @@ print(train_data.iloc[0:4, [0, 1, 2, 3, -3, -2, -1]])
 # 因此，在将数据提供给模型之前，我们将其从数据集中删除。
 
 all_features = pd.concat((train_data.iloc[:, 1:-1], test_data.iloc[:, 1:]))
+
 '''
 此处的all_features,指的是所有的参数。
 所以训练集排除第一列id和最后一列正确预测房价标签
@@ -146,17 +147,97 @@ pd.concat数据拼接
 三、数据预处理
 '''
 
+# 在开始建模之前，我们需要对数据进行预处理。
+# 首先，我们将所有缺失的值替换为相应特征的平均值。
+# 然后，为了将所有特征放在一个共同的尺度上，
+# 我们通过将特征重新缩放到  零均值   和   单位方差   来标准化数据：
+# 见md 解释数学概念
+# 直观地说，我们标准化数据有两个原因：
+# 首先，它方便优化。
+# 其次，因为我们不知道哪些特征是相关的， 所以我们不想让惩罚分配给一个特征的系数比分配给其他任何特征的系数更大。
 
 
+# 若无法获得测试数据，则可根据训练数据计算均值和标准差
+numeric_features = all_features.dtypes[all_features.dtypes != 'object'].index
+print(all_features.dtypes)
+'''
+MSSubClass         int64
+MSZoning          object
+LotFrontage      float64
+LotArea            int64
+Street            object
+                  ...   
+MiscVal            int64
+MoSold             int64
+YrSold             int64
+SaleType          object
+SaleCondition     object
+Length: 79, dtype: object
+'''
+print(numeric_features)
+'''
+Index(['MSSubClass', 'LotFrontage', 'LotArea', 'OverallQual', 'OverallCond',
+       'YearBuilt', 'YearRemodAdd', 'MasVnrArea', 'BsmtFinSF1', 'BsmtFinSF2',
+       'BsmtUnfSF', 'TotalBsmtSF', '1stFlrSF', '2ndFlrSF', 'LowQualFinSF',
+       'GrLivArea', 'BsmtFullBath', 'BsmtHalfBath', 'FullBath', 'HalfBath',
+       'BedroomAbvGr', 'KitchenAbvGr', 'TotRmsAbvGrd', 'Fireplaces',
+       'GarageYrBlt', 'GarageCars', 'GarageArea', 'WoodDeckSF', 'OpenPorchSF',
+       'EnclosedPorch', '3SsnPorch', 'ScreenPorch', 'PoolArea', 'MiscVal',
+       'MoSold', 'YrSold'],
+      dtype='object')
+'''
+'''
+从all_features.dtypes中拿出dtype不是object的列的index(标题)
+赋值给numeric_features
 
+实现逻辑：all_features.dtypes会返回一个index标题和其数据类型的二维数组
+all_features.dtypes != 'object' 会返回一个位置一一对应的true false
+这样会挑选出一个新的类似all_features.dtypes但是没有object的二维数组
+然后调用.index方法取出index
 
+dtypes见https://zhuanlan.zhihu.com/p/350568058
+index见https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.Index.html
+'''
+all_features[numeric_features] = all_features[numeric_features].apply(
+    lambda x: (x - x.mean()) / (x.std()))
+'''
+对于所有的数值，我们用所拿到的是数值的标题来取这几列，
+应用一个函数，这个函数是见md解释里面的意思
+使其所有数据变成均值为0方差为1。
 
+此处是把训练集和测试集放在一起做均值和方差
+'''
+# 在标准化数据之后，所有均值消失，因此我们可以将缺失值设置为0
+all_features[numeric_features] = all_features[numeric_features].fillna(0)
+'''
+fillna(0)在实际数据中，对应的是数值的那几列，把Nan改成0
+(因为经过我们前面的归一化，平均值已经变成0了)
+'''
 
+# 接下来，我们处理离散值。
+# 这包括诸如“MSZoning”之类的特征。
+# 我们用独热编码替换它们， 方法与前面将多类别标签转换为向量的方式相同 （请参见 3.4.1节）。
+'''
+如y1=(0,0,1)y=(0,1,0)y=(1,0,0)
+'''
+# 例如，“MSZoning”包含值“RL”和“Rm”。 我们将创建两个新的指示器特征“MSZoning_RL”和“MSZoning_RM”，其值为0或1。
+# 根据独热编码，如果“MSZoning”的原始值为“RL”， 则：“MSZoning_RL”为1，“MSZoning_RM”为0。
+# pandas软件包会自动为我们实现这一点。
 
+# “Dummy_na=True”将“na”（缺失值）视为有效的特征值，并为其创建指示符特征
+all_features = pd.get_dummies(all_features, dummy_na=True)
+print(all_features.shape)
+'''
+(2919, 331)
+'''
 
-
-
-
+# 你可以看到，此转换会将特征的总数量从79个增加到331个。
+# 最后，通过values属性，我们可以 从pandas格式中提取NumPy格式，并将其转换为张量表示用于训练。
+n_train = train_data.shape[0]
+train_features = torch.tensor(all_features[:n_train].values, dtype=torch.float32)
+test_features = torch.tensor(all_features[n_train:].values, dtype=torch.float32)
+train_labels = torch.tensor(
+    train_data.SalePrice.values.reshape(-1, 1), dtype=torch.float32)
 
 
 
