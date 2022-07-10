@@ -6,6 +6,8 @@ from torch import nn
 from torch.nn import functional as F
 from torch.utils import data
 from torchvision import transforms
+from IPython import display
+from matplotlib import pyplot as plt
 '''
 一、下载和缓存数据集
 这个不用太明白，跟所学无关，为了下载数据提供了个脚本罢了
@@ -215,6 +217,11 @@ fillna(0)在实际数据中，对应的是数值的那几列，把Nan改成0
 '''
 
 # 接下来，我们处理离散值。
+'''
+即对字符串编码
+如果RL表示一类、RM表示一类
+用onehot为其编码
+'''
 # 这包括诸如“MSZoning”之类的特征。
 # 我们用独热编码替换它们， 方法与前面将多类别标签转换为向量的方式相同 （请参见 3.4.1节）。
 '''
@@ -226,20 +233,354 @@ fillna(0)在实际数据中，对应的是数值的那几列，把Nan改成0
 
 # “Dummy_na=True”将“na”（缺失值）视为有效的特征值，并为其创建指示符特征
 all_features = pd.get_dummies(all_features, dummy_na=True)
+'''
+可以见22数据预处理40行开始，这里把缺省数据列入考量
+'''
 print(all_features.shape)
 '''
 (2919, 331)
 '''
-
 # 你可以看到，此转换会将特征的总数量从79个增加到331个。
+'''
+onehot后，好多object字段的特征一分为多，特征总数从79变成了331个
+'''
+
+
 # 最后，通过values属性，我们可以 从pandas格式中提取NumPy格式，并将其转换为张量表示用于训练。
 n_train = train_data.shape[0]
+print(n_train)
+'''
+1460
+'''
+
 train_features = torch.tensor(all_features[:n_train].values, dtype=torch.float32)
 test_features = torch.tensor(all_features[n_train:].values, dtype=torch.float32)
 train_labels = torch.tensor(
     train_data.SalePrice.values.reshape(-1, 1), dtype=torch.float32)
 
+'''
+默认float64，这里指定为32
 
+train_data.shape是一个表示形状的张量，这里是二维张量
+train_data.shape[0]就是其0维，也就是1460,81中的1460
+
+torch.tensor(all_features[:n_train].values
+
+就是取前1460行作为训练集的values，合为一个二维列表(通过torch.tensor变成tensor格式)
+(与之相反的是index标题)
+
+所以测试集就是all_features[n_train:]
+'''
+
+'''
+trainlabels,这个就是房价金额，这是标签(输出值)
+去traindata的SalePrice这个index的values，并且reshape
+使得数据每行一个，自适应行数
+
+可以与前面的参数一一对照
+'''
+
+'''
+四、训练
+'''
+# 首先，我们训练一个带有损失平方的线性模型。
+# 显然线性模型很难让我们在竞赛中获胜，但线性模型提供了一种健全性检查， 以查看数据中是否存在有意义的信息。
+# 如果我们在这里不能做得比随机猜测更好，那么我们很可能存在数据处理错误。
+# 如果一切顺利，线性模型将作为基线（baseline）模型， 让我们直观地知道最好的模型有超出简单的模型多少。
+loss = nn.MSELoss()
+'''
+差的平方
+取平均值
+'''
+in_features = train_features.shape[1]
+'''
+in_features,输入的维度，331
+(即train_feature的shape的第二位，第一位是数据个数)
+'''
+
+def get_net():
+    net = nn.Sequential(nn.Linear(in_features,1))
+    '''
+    一个单层线性回归，输入维度331，输出维度1
+    '''
+    return net
+
+# 房价就像股票价格一样，我们关心的是相对数量，而不是绝对数量。
+# 因此，我们更关心相对误差 而不是  绝对误差
+# 见md
+
+# 解决这个问题的一种方法是用价格预测的对数来衡量差异。
+# 使用log的均方根误差
+# 见md
+'''
+对于比较大的值正的值做相对误差的回归时候，
+'''
+def log_rmse(net, features, labels):
+    # 为了在取对数时进一步稳定该值，将小于1的值设置为1
+    clipped_preds = torch.clamp(net(features), 1, float('inf'))
+    '''
+    clamp
+    对于net(features)，即网络的输出。
+    最小值为1，小于1设置为1.
+    因为小于1取log就是负数了，我们要都是正数
+    不设上限，上限为float('inf')
+    其值给到clipped_preds
+    见 https://blog.csdn.net/hb_learing/article/details/115696206
+    '''
+    rmse = torch.sqrt(loss(torch.log(clipped_preds),
+                           torch.log(labels)))
+    '''
+    这就是转变后的输出与label求均方误差loss。
+    即求出 差，然后平方，然后平均
+    是一个单元素tensor
+    所以return时候要sqrt开根号
+    概念见md
+    '''
+    '''
+    rmse是一个单元素的tensor张量
+    .item是用于把单元素张量变成数字的，保留原类型
+    见 https://www.jianshu.com/p/79da0eac5f01
+    https://blog.csdn.net/weixin_44739213/article/details/108659763
+    使得返回的loss是一个数字
+    '''
+    return rmse.item()
+
+# 与前面的部分不同，我们的训练函数将借助Adam优化器 （我们将在后面章节更详细地描述它）。
+# Adam优化器的主要吸引力在于它对初始学习率不那么敏感。
+def train(net, train_features, train_labels, test_features, test_labels,
+          num_epochs, learning_rate, weight_decay, batch_size):
+    train_ls, test_ls = [], []
+    train_iter = d2l.load_array((train_features, train_labels), batch_size)
+    # 这里使用的是Adam优化算法
+    '''
+    改用adam优化算法，可以认为是一个比较平滑的SGD
+    对学习率不敏感
+    '''
+    optimizer = torch.optim.Adam(net.parameters(),
+                                 lr = learning_rate,
+                                 weight_decay = weight_decay)
+    '''
+    weight_decay是权重衰退，输入lambda来增加惩罚项
+    '''
+    for epoch in range(num_epochs):
+        for X, y in train_iter:
+            optimizer.zero_grad()
+            l = loss(net(X), y)
+            l.backward()
+            optimizer.step()
+        '''
+        下面这些是用来画图的，存在数组里
+        '''
+        train_ls.append(log_rmse(net, train_features, train_labels))
+        if test_labels is not None:
+            test_ls.append(log_rmse(net, test_features, test_labels))
+    return train_ls, test_ls
+
+
+'''
+五、K折交叉验证
+'''
+'''
+数据集不够时，采用K折交叉验证。
+这里，原始训练数据被分成k个不重叠的子集。
+然后执行k次模型训练和验证，每次在k-1个子集上进行训练，并在剩余的一个子集（在该轮中没有用于训练的子集）上进行验证。
+最后，通过对k次实验的结果取平均来估计训练和验证误差。
+'''
+# 其有助于模型选择和超参数调整。
+# 我们首先需要定义一个函数，在k折交叉验证过程中返回第i折的数据。
+# 具体地说，它选择第i个切片作为验证数据，其余部分作为训练数据。
+# 注意，这并不是处理数据的最有效方法，如果我们的数据集大得多，会有其他解决办法。
+'''
+用来被调用来建立k折交叉验证的数据集
+'''
+def get_k_fold_data(k, i, X, y):
+    '''
+    给定数据集X，y。和共k折和当前折。
+    返回当前的训练集和交叉验证集
+    k: 分成k折
+    i: 此时是第几折
+    Xy:训练数据
+    '''
+    assert k > 1
+    '''
+    k不大于1就报错
+    '''
+    fold_size = X.shape[0] // k
+    '''
+    样本数除以k获得折的大小，这里是整数除法，除出来无小数
+    '''
+    X_train, y_train = None, None
+    for j in range(k):
+        idx = slice(j * fold_size, (j + 1) * fold_size)
+        '''
+        j * fold_size的到当前的位置
+        并用(j * fold_size, (j + 1) * fold_size)取一个fold_size大小
+        
+        slice函数接收参数：起始点和结束点和步长
+        用 tensor[slice]来取元素
+        见 https://www.w3school.com.cn/python/ref_func_slice.asp
+        '''
+        X_part, y_part = X[idx, :], y[idx]
+        '''
+        tensor中第一层是取对应位置切片(对应行，即对应的数据集的部分)
+        第二层取全部，指一整行
+        '''
+        if j == i:
+            X_valid, y_valid = X_part, y_part
+            '''
+            j从0到k，j==i
+            表示到了当前这一折，这折的数据为交叉验证集，赋值
+            '''
+        elif X_train is None:
+            X_train, y_train = X_part, y_part
+            '''
+            跟i不一致且train还是空时，赋值
+            '''
+        else:
+            X_train = torch.cat([X_train, X_part], 0)
+            y_train = torch.cat([y_train, y_part], 0)
+            '''
+            不为空且也不是i时，粘贴上去
+            即两个数据集第0维相连，就是前后相连。直接增加行数变成一个
+            见 https://blog.csdn.net/xinjieyuan/article/details/105208352
+            '''
+    return X_train, y_train, X_valid, y_valid
+
+# 当我们在k折交叉验证中训练k次后，返回训练和验证误差的平均值。
+'''
+开始做k折交叉验证了
+输入训练集等等参数
+返回训练和验证误差的平均值
+'''
+def k_fold(k, X_train, y_train, num_epochs, learning_rate, weight_decay,
+           batch_size):
+    train_l_sum, valid_l_sum = 0, 0
+    '''
+    训练集和测试集的损失的和
+    '''
+    for i in range(k):
+        data = get_k_fold_data(k, i, X_train, y_train)
+        '''
+        调用上面函数
+        来生成k折一次计算，即i从0到k，每一轮取一个
+        产生一次数据集，包起来给data
+        用data点  来访问
+        '''
+        net = get_net()
+        '''
+        net
+        用一层线性
+        '''
+        train_ls, valid_ls = train(net, *data, num_epochs, learning_rate,
+                                   weight_decay, batch_size)
+        '''
+        *data是解码，变成前面四个拿到的数据
+        X_train y_train
+        X_valid y_valid
+        刚好和train函数要求的一致
+        即  训练集参数  训练集结果
+        测试集参数(验证集) 测试集结果(验证集)
+        '''
+        train_l_sum += train_ls[-1]
+        valid_l_sum += valid_ls[-1]
+        '''
+        把每一折上面的  最终的(训练到最后的)  loss求和，在最后除以k做平均作为返回值
+        因为训练函数中会把每个epoch的loss保存在这个数组中(用来画图)
+        所以取的最好的loss在最后一个，用-1
+        '''
+        '''
+        画图用(其实只花了第一折的时候的图随epoch)
+        '''
+        if i == 0:
+            d2l.plot(list(range(1, num_epochs + 1)), [train_ls, valid_ls],
+                     xlabel='epoch', ylabel='rmse', xlim=[1, num_epochs],
+                     legend=['train', 'valid'], yscale='log')
+
+        print(f'折{i + 1}，训练log rmse{float(train_ls[-1]):f}, '
+              f'验证log rmse{float(valid_ls[-1]):f}')
+    return train_l_sum / k, valid_l_sum / k
+
+
+'''
+六、模型选择
+'''
+# 在本例中，我们选择了一组未调优的超参数，并将其留给读者来改进模型。
+# 找到一组调优的超参数可能需要时间，这取决于一个人优化了多少变量。
+# 有了足够大的数据集和合理设置的超参数，k折交叉验证往往对多次测试具有相当的稳定性。
+# 然而，如果我们尝试了不合理的超参数，我们可能会发现验证效果不再代表真正的误差。
+k, num_epochs, lr, weight_decay, batch_size = 5, 100, 5, 0, 64
+train_l, valid_l = k_fold(k, train_features, train_labels, num_epochs, lr,
+                          weight_decay, batch_size)
+print(f'{k}-折验证: 平均训练log rmse: {float(train_l):f}, '
+      f'平均验证log rmse: {float(valid_l):f}')
+d2l.plt.show()
+'''
+折1，训练log rmse0.169830, 验证log rmse0.156834
+折2，训练log rmse0.162307, 验证log rmse0.190018
+折3，训练log rmse0.164326, 验证log rmse0.168819
+折4，训练log rmse0.167602, 验证log rmse0.154597
+折5，训练log rmse0.162626, 验证log rmse0.182676
+5-折验证: 平均训练log rmse: 0.165338, 平均验证log rmse: 0.170589
+'''
+# 请注意，有时一组超参数的训练误差可能非常低，但k折交叉验证的误差要高得多，这表明模型过拟合了。
+# 在整个训练过程中，你将希望监控训练误差和验证误差这两个数字。
+# 较少的过拟合可能表明现有数据可以支撑一个更强大的模型，较大的过拟合可能意味着我们可以通过正则化技术来获益。
+
+
+'''
+七、提交你的Kaggle预测
+'''
+# 既然我们知道应该选择什么样的超参数， 我们不妨使用所有数据对其进行训练
+# （而不是仅使用交叉验证中使用的1-1/K的数据）。
+# 然后，我们通过这种方式获得的模型可以应用于测试集。
+# 将预测保存在CSV文件中可以简化将结果上传到Kaggle的过程。
+def train_and_pred(train_features, test_features, train_labels, test_data,
+                   num_epochs, lr, weight_decay, batch_size):
+    net = get_net()
+    train_ls, _ = train(net, train_features, train_labels, None, None,
+                        num_epochs, lr, weight_decay, batch_size)
+    d2l.plot(np.arange(1, num_epochs + 1), [train_ls], xlabel='epoch',
+             ylabel='log rmse', xlim=[1, num_epochs], yscale='log')
+    d2l.plt.show()
+    print(f'训练log rmse：{float(train_ls[-1]):f}')
+    # 将网络应用于测试集。
+    preds = net(test_features).detach().numpy()
+
+    # 将其重新格式化以导出到Kaggle
+    test_data['SalePrice'] = pd.Series(preds.reshape(1, -1)[0])
+    '''
+    
+    preds是一个每行一个数据，共好多行的数据集
+    先reshape成为   1行自适应，这样就是单独数据不分层了，但是有两层[]因为，1也是一个维度
+    所以之后[0]取出第一行所有数据
+    这样就是一个队列了
+    重新创建一个pandas
+    即给其序列放上index(最前面有01234这种行的编码)
+    见https://blog.csdn.net/TeFuirnever/article/details/94331545
+    
+    test_data是前面最开始readcsv最原始的pandas数据，是有标题有前面01234的数据
+    我们当时训练和交叉验证的时候，是做了处理然后.values
+    所以没有前面01234的行的编码
+    
+    现在要把数据加进去，所以要转变成有行的编码的形式，即pandas数据的形式
+    '''
+    submission = pd.concat([test_data['Id'], test_data['SalePrice']], axis=1)
+    '''
+    axis=1各行合并
+    '''
+    submission.to_csv('submission.csv', index=False)
+    '''
+    pandas变成csv文件
+    '''
+
+
+# 如果测试集上的预测与K倍交叉验证过程中的预测相似,那就是时候把它们上传到Kaggle了。
+# 下面的代码将生成一个名为submission.csv的文件。
+train_and_pred(train_features, test_features, train_labels, test_data,
+               num_epochs, lr, weight_decay, batch_size)
+'''
+训练log rmse：0.162347
+'''
 
 
 

@@ -11,7 +11,8 @@ from torchvision import transforms
 3、1线性回归
 3、4 softmax回归(这个要到书上细细的看懂里面的概念)(看第一版书)
 '''
-
+# MSEloss返回的是差的平方，即   (x-y)的平方
+# 然后取平均
 
 '''
 定义一个net时

@@ -183,7 +183,18 @@ for epoch in range(num_epochs):
     for X, y in data_iter(batch_size, features, labels):  # 每次十个，但是不会重复，yield会从之前断点往后执行
         l = loss(net(X, w, b), y)  # X和y的小批量损失
         # 因为l形状是(batch_size,1)，而不是一个标量。l中的所有元素被加到一起，并以此计算关于[w,b]的梯度，存放到w.grad和b.grad中
-        l.sum().backward() # 因为上一轮进行完SGD后，SGD函数里面调用的w和b的grad清零了梯度，所以不用在backward之前清零
+        l.sum().backward()
+        '''
+        sum是因为此时的l是接收loss的返回值
+        这个loss是一个向量，因为一次输入了一个batch_size的数据进行的计算
+        所以出来的也就是向量
+        要把这个loss向量求和再求梯度
+        
+        此处不求平均，是因为在SGD的优化中会对梯度除以batch_size
+        (loss多了batchsize，所以梯度也相当于一定程度上是batchsize倍，所以在梯度中除)
+        (掉包中不是这样，掉包中loss是出平均值，优化是做梯度不除batchsize)
+        '''
+        # 因为上一轮进行完SGD后，SGD函数里面调用的w和b的grad清零了梯度，所以不用在backward之前清零
         sgd([w, b], lr, batch_size)  # 使用参数的梯度更新参数
         # w b是全局变量，所以在函数中-=可以直接改变
     with torch.no_grad():
