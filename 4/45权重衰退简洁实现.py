@@ -10,7 +10,7 @@ from torchvision import transforms
 import torch
 from torch import nn
 from d2l import torch as d2l
-# 在下面的代码中，我们在实例化优化器时直接通过weight_decay指定weight decay超参数。见30行，wd同lambd
+# 在下面的代码中，我们在实例化优化器时直接通过weight_decay指定weight decay超参数。见33行，wd同lambd
 # 默认情况下，PyTorch同时衰减权重和偏移。
 # 这里我们只为权重设置了weight_decay，所以偏置参数b不会衰减。
 '''
